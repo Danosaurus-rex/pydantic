@@ -739,27 +739,30 @@ def field_singleton_sub_fields_schema(
 
         sub_field_schemas = []
         for sf in sub_fields:
-            sub_schema, sub_definitions, sub_nested_models = field_type_schema(
-                sf,
-                by_alias=by_alias,
-                model_name_map=model_name_map,
-                schema_overrides=schema_overrides,
-                ref_prefix=ref_prefix,
-                ref_template=ref_template,
-                known_models=known_models,
-            )
-            definitions.update(sub_definitions)
-            if schema_overrides and 'allOf' in sub_schema:
-                # if the sub_field is a referenced schema we only need the referenced
-                # object. Otherwise we will end up with several allOf inside anyOf/oneOf.
-                # See https://github.com/pydantic/pydantic/issues/1209
-                sub_schema = sub_schema['allOf'][0]
+            try:
+                sub_schema, sub_definitions, sub_nested_models = field_type_schema(
+                    sf,
+                    by_alias=by_alias,
+                    model_name_map=model_name_map,
+                    schema_overrides=schema_overrides,
+                    ref_prefix=ref_prefix,
+                    ref_template=ref_template,
+                    known_models=known_models,
+                )
+                definitions.update(sub_definitions)
+                if schema_overrides and 'allOf' in sub_schema:
+                    # if the sub_field is a referenced schema we only need the referenced
+                    # object. Otherwise we will end up with several allOf inside anyOf/oneOf.
+                    # See https://github.com/pydantic/pydantic/issues/1209
+                    sub_schema = sub_schema['allOf'][0]
 
-            if sub_schema.keys() == {'discriminator', 'oneOf'}:
-                # we don't want discriminator information inside oneOf choices, this is dealt with elsewhere
-                sub_schema.pop('discriminator')
-            sub_field_schemas.append(sub_schema)
-            nested_models.update(sub_nested_models)
+                if sub_schema.keys() == {'discriminator', 'oneOf'}:
+                    # we don't want discriminator information inside oneOf choices, this is dealt with elsewhere
+                    sub_schema.pop('discriminator')
+                sub_field_schemas.append(sub_schema)
+                nested_models.update(sub_nested_models)
+            except SkipField as exc:
+                warnings.warn(message=str(exc), category=UserWarning)
         s['oneOf' if field_has_discriminator else 'anyOf'] = sub_field_schemas
         return s, definitions, nested_models
 
@@ -859,6 +862,15 @@ def field_singleton_schema(  # noqa: C901 (ignore complexity)
         return {'type': 'null'}, definitions, nested_models
     if is_callable_type(field_type):
         raise SkipField(f'Callable {field.name} was excluded from schema since JSON schema has no equivalent type.')
+    field_validators = field.validators
+    if any(validator.__name__ == 'arbitrary_type_validator' for validator in field_validators) and (
+        not hasattr(field_type, '__modify_schema__')
+    ):
+        raise SkipField(
+            f'Arbitrary type {field.name} was excluded from schema since '
+            f'{field.name} is an arbitrary type and has no `__modify_schema__` '
+            f'classmethod defined.'
+        )
     f_schema: Dict[str, Any] = {}
     if field.field_info is not None and field.field_info.const:
         f_schema['const'] = field.default
