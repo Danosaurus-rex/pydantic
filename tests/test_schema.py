@@ -3065,3 +3065,62 @@ def test_model_with_type_attributes():
         'properties': {'a': {'title': 'A'}, 'b': {'title': 'B'}},
         'required': ['a', 'b'],
     }
+
+
+def test_model_with_arbitrary_types_ignored_from_schema():
+    class Foo:
+        a: int
+
+    class BarModel(BaseModel):
+        foo: Foo
+
+        class Config:
+            arbitrary_types_allowed = True
+
+    with pytest.raises(UserWarning):
+        # Arbitrary type excluded.
+        assert BarModel.schema() == {'title': 'BarModel', 'type': 'object', 'properties': {}}
+
+
+def test_model_with_arbitrary_type_with_modified_schema():
+    class Foo:
+        a: int
+
+        @classmethod
+        def __modify_schema__(cls, field_schema, field: Optional[ModelField]):
+            field_schema['type'] = cls.__name__
+            field_schema['examples'] = [f'{cls.__name__}(a={i*10})' for i in range(3)]
+
+    class BarModel(BaseModel):
+        foo: Foo
+
+        class Config:
+            arbitrary_types_allowed = True
+
+    # Arbitrary type with modified schema included.
+    assert BarModel.schema() == {
+        'title': 'BarModel',
+        'type': 'object',
+        'properties': {'foo': {'title': 'Foo', 'type': 'Foo', 'examples': ['Foo(a=0)', 'Foo(a=10)', 'Foo(a=20)']}},
+        'required': ['foo'],
+    }
+
+
+def test_model_with_arbitrary_type_with_sub_fields():
+    class Foo:
+        a: int
+
+    class BarModel(BaseModel):
+        foo: Union[Foo, Dict]
+
+        class Config:
+            arbitrary_types_allowed = True
+
+    with pytest.raises(UserWarning):
+        # Arbitrary type ignored - sub types kept.
+        assert BarModel.schema() == {
+            'title': 'BarModel',
+            'type': 'object',
+            'properties': {'foo': {'title': 'Foo', 'type': 'object'}},
+            'required': ['foo'],
+        }
